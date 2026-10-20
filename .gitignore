@@ -1,0 +1,105 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# The .vscode folder contains launch configuration and tasks you configure in
+# VS Code which you may wish to be included in version control, so this line
+# is commented out by default.
+#.vscode/
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android Studio will place build artifacts here
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# Firebase configuration files (contain API keys)
+android/app/google-services.json
+ios/Runner/GoogleService-Info.plist
+
+# API Keys and sensitive configuration
+api_keys.env
+.env
+.env.local
+.env.production
+.env.development
+
+# Release keystore
+*.jks
+*.keystore
+my-release-key.jks
+
+# Firebase hosting cache
+.firebase/
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+flutter_*.log
+flutter_*.png
+
+# Setup and documentation files (keep only in local development)
+ADMOB_*.md
+ANDROID_RUN_SETUP.md
+API_KEYS_*.md
+BACKEND_NOTIFICATION_GUIDE.md
+CLOUD_FUNCTIONS_SETUP.md
+CLUBS_LIST_SHEET_IMPLEMENTATION.md
+CLUB_FEATURES_IMPLEMENTATION.md
+COMPLETE_NOTIFICATIONS_GUIDE.md
+COMPLETE_NOTIFICATION_EVENTS.md
+EXPIRED_POSTS_CLEANUP.md
+FIRESTORE_RULES_UPDATES.md
+FIRESTORE_SCHEMA.md
+IMAGE_OPTIMIZATION_GUIDE.md
+IOS_*.md
+LOCATION_INPUT_UPDATE.md
+MAPS_*.md
+MAP_CONTROLS_FIX.md
+NOTIFICATION_*.md
+PLATFORM_SPECIFIC_MAPS_IMPLEMENTATION.md
+PROJECT_HEALTH_CHECK.md
+QUICK_*.md
+
+# Misc files
+errors\ on\ ios\ with\ maps
+*.iml
+sports_chat_app.iml
+
+*client_secret*.json
+*.env
+*.key

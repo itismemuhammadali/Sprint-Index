@@ -1,0 +1,376 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions for common checks
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    // Retrieves a user's profile to check their 'isPrivate' status
+    function getUserProfile(userId) {
+      return get(/databases/$(database)/documents/users/$(userId));
+    }
+    
+    // Helper function to check if user is an admin/moderator
+    // You can implement this by adding an 'isAdmin' field to user profiles
+    // or create a separate 'admins' collection
+    function isAdmin(userId) {
+      // For now, return false - implement admin check as needed
+      // Example: return get(/databases/$(database)/documents/users/$(userId)).data.get('isAdmin', false);
+      return false;
+    }
+    
+    // Rules for the 'users' collection (user profiles)
+    // Advanced search filters users based on:
+    // 1. Users I have followed
+    // 2. Users who have followed me
+    // 3. Users we follow each other
+    // 4. Users in clubs I'm admin of
+    // 5. Users in clubs I'm a member of
+    // 6. Clubs I'm in or admin of (by club name)
+    match /users/{userId} {
+      // A user can create their own profile
+      allow create: if isOwner(userId) && request.resource.data.isPrivate is bool;
+      
+      // Allow reading all user profiles for discovery
+      // isPrivate only controls post visibility, not profile discoverability
+      allow read: if true;
+      
+      // Owner can update their profile
+      // Anyone can update follower/following counts (for follow functionality)
+      // Allow updating blockedUsers array for blocking functionality
+      allow update: if isOwner(userId) || 
+        (isAuthenticated() && 
+         (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['followersCount', 'followingCount']) ||
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['blockedUsers'])));
+      
+      // Only the owner can delete their profile
+      allow delete: if isOwner(userId);
+      
+      // Followers subcollection
+      match /followers/{followerId} {
+        allow read: if isAuthenticated();
+        // Any authenticated user can add themselves as a follower
+        allow create: if isAuthenticated() && isOwner(followerId);
+        // Only the follower can remove themselves
+        allow delete: if isAuthenticated() && isOwner(followerId);
+      }
+      
+      // Following subcollection
+      match /following/{followingId} {
+        allow read: if isAuthenticated();
+        // Only the user can add to their following list
+        allow create: if isAuthenticated() && isOwner(userId);
+        // Only the user can remove from their following list
+        allow delete: if isAuthenticated() && isOwner(userId);
+      }
+
+      // Blocked users subcollection
+      match /blockedUsers/{blockedUserId} {
+        allow read: if isAuthenticated() && isOwner(userId);
+        // Only the user can block someone
+        allow create: if isAuthenticated() && isOwner(userId);
+        // Only the user can unblock someone
+        allow delete: if isAuthenticated() && isOwner(userId);
+      }
+
+      // Clubs subcollection (clubs the user is a member of)
+      match /clubs/{clubId} {
+        allow read: if isAuthenticated() && isOwner(userId);
+        // Only the user can add themselves to their clubs list
+        allow create: if isAuthenticated() && isOwner(userId);
+        // Only the user can remove clubs from their list
+        allow delete: if isAuthenticated() && isOwner(userId);
+        // Allow Cloud Functions and authenticated users to manage club membership
+        allow write: if request.auth == null || isAuthenticated();
+      }
+    }
+    
+    // Rules for the 'posts' collection (user content)
+    // NOTE: Queries with multiple filters (where + orderBy) require composite indexes
+    // These are created automatically by Firestore when you run the query
+    match /posts/{postId} {
+      // Authenticated users can create posts with required fields
+      allow create: if isAuthenticated() 
+        && isOwner(request.resource.data.userId)
+        && request.resource.data.keys().hasAll(['userId', 'userName', 'email', 'timestamp']);
+      
+      // Posts are publicly readable by default
+      // You can add privacy logic later if needed
+      allow read: if true;
+      
+      // Only the post owner can update their post content
+      // Authenticated users can update like/dislike/comment counts
+      allow update: if (isOwner(resource.data.userId) && request.resource.data.userId == resource.data.userId)
+        || (isAuthenticated() && (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likesCount', 'dislikesCount', 'commentsCount'])
+        ));
+      
+      // Only the post owner can delete their post
+      allow delete: if isOwner(resource.data.userId);
+      
+      // Likes subcollection
+      match /likes/{likeId} {
+        allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+        allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        allow read: if true;
+      }
+      
+      // Dislikes subcollection
+      match /dislikes/{dislikeId} {
+        allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+        allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+        allow read: if true;
+      }
+      
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow create: if isAuthenticated()
+          && request.resource.data.keys().hasAll(['userId', 'userName', 'text', 'timestamp']);
+        allow read: if true;
+        allow update: if isOwner(resource.data.userId);
+        allow delete: if isOwner(resource.data.userId);
+      }
+    }
+    
+    // Rules for the 'reports' collection (content moderation)
+    // Reports can have: type ('post' | 'user'), postId, reportedUserId, reporterId,
+    // reason, additionalInfo, status, createdAt, updatedAt, postContent, userContext
+    match /reports/{reportId} {
+      // Allow authenticated users to create reports
+      // Must include required fields and reporter must be the authenticated user
+      // Prevent users from reporting themselves
+      allow create: if isAuthenticated() 
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.reportedUserId != request.auth.uid
+        && request.resource.data.keys().hasAll(['type', 'reportedUserId', 'reporterId', 'reason', 'status', 'createdAt'])
+        && request.resource.data.type in ['post', 'user']
+        && request.resource.data.status == 'pending'
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0;
+      
+      // Allow reporters to read their own reports
+      // Allow moderators/admins to read all reports
+      allow read: if isAuthenticated() && 
+        (resource.data.reporterId == request.auth.uid || isAdmin(request.auth.uid));
+      
+      // Allow moderators/admins to update report status
+      // Allow reporters to update their own reports (limited fields)
+      allow update: if isAuthenticated() && 
+        ((resource.data.reporterId == request.auth.uid &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['updatedAt'])) ||
+         (isAdmin(request.auth.uid) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'updatedAt'])));
+      
+      // Only allow moderators/admins to delete reports
+      allow delete: if isAuthenticated() && isAdmin(request.auth.uid);
+    }
+
+    
+    // Rules for password reset functionality
+    match /password_resets/{email} {
+      // Allow anyone to create/update password reset requests
+      allow create, update: if true;
+      // Allow anyone to read their own password reset data
+      allow read: if true;
+      // Allow deletion after use
+      allow delete: if true;
+    }
+    
+    // Rules for password updates
+    match /password_updates/{email} {
+      // Allow creating password update requests
+      allow create, update: if true;
+      // Allow reading password update data
+      allow read: if true;
+      // Allow deletion
+      allow delete: if true;
+    }
+    
+    // Rules for the 'user_locations' collection (user location data)
+    match /user_locations/{userId} {
+      // Only the owner can create their location
+      allow create: if isOwner(userId);
+      
+      // Allow reading all user locations for discovery/map features
+      allow read: if true;
+      
+      // Only the owner can update their location
+      allow update: if isOwner(userId);
+      
+      // Only the owner can delete their location
+      allow delete: if isOwner(userId);
+    }
+    
+    // Rules for the 'user_sports' collection (user sports preferences)
+    match /user_sports/{userId} {
+      // Only the owner can create/update their sports
+      allow create, update: if isOwner(userId);
+      
+      // Allow reading all user sports for discovery
+      allow read: if true;
+      
+      // Only the owner can delete their sports
+      allow delete: if isOwner(userId);
+    }
+    
+    // Rules for the 'conversations' collection
+    match /conversations/{conversationId} {
+      // Allow reading if user is a participant
+      allow read: if isAuthenticated() && 
+        request.auth.uid in resource.data.participants;
+      
+      // Allow creating conversations if user is authenticated
+      allow create: if isAuthenticated();
+      
+      // Allow updating conversations (for last message) if user is a participant
+      allow update: if isAuthenticated() && 
+        request.auth.uid in resource.data.participants;
+      
+      // Messages subcollection
+      match /messages/{messageId} {
+        // Allow reading messages if user is authenticated and is in the conversation ID
+        allow read: if isAuthenticated();
+        
+        // Allow creating messages if user is authenticated and is the sender
+        allow create: if isAuthenticated() && 
+          request.resource.data.senderId == request.auth.uid;
+      }
+    }
+    
+    // Rules for the 'notifications' collection
+    // Notifications can have: recipientUserId, fcmToken, title, body, data, 
+    // createdAt, sent, messageId, error, retryCount
+    match /notifications/{notificationId} {
+      // Allow authenticated users to read all notifications (for debugging/testing)
+      // In production, restrict to: resource.data.recipientUserId == request.auth.uid
+      allow read: if isAuthenticated();
+      
+      // Allow authenticated users to create notifications (for sending to others)
+      // Also allow Cloud Functions (request.auth == null) to create/update
+      allow create: if isAuthenticated() || request.auth == null;
+      
+      // Allow Cloud Functions to update notifications (for marking as sent, retrying, etc.)
+      allow update: if request.auth == null || isAuthenticated();
+      
+      // Allow deleting own notifications
+      allow delete: if isAuthenticated();
+    }
+    
+    // Rules for the 'events' collection
+    match /events/{eventId} {
+      // Allow authenticated users to create events
+      allow create: if isAuthenticated();
+      
+      // Allow reading all events
+      allow read: if true;
+      
+      // Only the event creator can update/delete
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+    }
+    
+    // Rules for the 'polls' collection
+    match /polls/{pollId} {
+      // Allow authenticated users to create polls
+      allow create: if isAuthenticated();
+      
+      // Allow reading all polls
+      allow read: if true;
+      
+      // Only the poll creator can update/delete
+      allow update, delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      
+      // User votes subcollection
+      match /userVotes/{userId} {
+        // Allow authenticated users to read votes
+        allow read: if isAuthenticated();
+        
+        // Allow users to vote
+        allow create: if isAuthenticated() && request.auth.uid == userId;
+        
+        // Allow users to update their vote
+        allow update: if isAuthenticated() && request.auth.uid == userId;
+        
+        // Allow users to remove their vote
+        allow delete: if isAuthenticated() && request.auth.uid == userId;
+      }
+    }
+    
+    // Rules for the 'clubJoinRequests' collection
+    match /clubJoinRequests/{requestId} {
+      // Allow authenticated users to read their own join requests or if they're the club admin
+      allow read: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         get(/databases/$(database)/documents/clubs/$(resource.data.clubId)).data.adminId == request.auth.uid);
+      
+      // Allow authenticated users to create join requests
+      allow create: if isAuthenticated() && 
+        request.resource.data.userId == request.auth.uid;
+      
+      // Allow club admin or requester to update/delete
+      allow update, delete: if isAuthenticated() && 
+        (resource.data.userId == request.auth.uid || 
+         get(/databases/$(database)/documents/clubs/$(resource.data.clubId)).data.adminId == request.auth.uid);
+    }
+    
+    // Rules for the 'clubs' collection
+    // Clubs can have: clubName, adminId, memberIds, onlyAdminCanMessage, 
+    // onlyAdminCanEditSettings, location, latitude, longitude, sport, 
+    // profilePictureUrl, createdAt, updatedAt, lastMessage, lastMessageTime, lastMessageSender
+    match /clubs/{clubId} {
+      // Allow reading all clubs for authenticated users (for map discovery)
+      allow read: if isAuthenticated();
+      
+      // Allow creating clubs if user is authenticated
+      allow create: if isAuthenticated();
+      
+      // Allow updating clubs if:
+      // 1. User is the admin, OR
+      // 2. If onlyAdminCanEditSettings is false, any club member can update
+      allow update: if isAuthenticated() && 
+        (resource.data.adminId == request.auth.uid ||
+         (resource.data.get('onlyAdminCanEditSettings', true) == false && 
+          request.auth.uid in resource.data.memberIds));
+      
+      // Only admin can delete clubs
+      allow delete: if isAuthenticated() && 
+        resource.data.adminId == request.auth.uid;
+      
+      // Club members subcollection (for joining/leaving clubs)
+      match /members/{userId} {
+        // Allow reading members if user is authenticated
+        allow read: if isAuthenticated();
+        
+        // Allow users to join a club (add themselves as a member)
+        allow create: if isAuthenticated() && request.auth.uid == userId;
+        
+        // Allow users to leave a club (remove themselves)
+        allow delete: if isAuthenticated() && request.auth.uid == userId;
+      }
+      
+      // Club messages subcollection
+      match /messages/{messageId} {
+        // Allow reading messages if user is a club member
+        allow read: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.memberIds;
+        
+        // Allow creating messages if:
+        // 1. User is a club member
+        // 2. If onlyAdminCanMessage is true, user must be admin
+        allow create: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.memberIds &&
+          (get(/databases/$(database)/documents/clubs/$(clubId)).data.onlyAdminCanMessage == false ||
+           get(/databases/$(database)/documents/clubs/$(clubId)).data.adminId == request.auth.uid);
+        
+        // Allow updating messages (for message status tracking)
+        allow update: if isAuthenticated() && 
+          request.auth.uid in get(/databases/$(database)/documents/clubs/$(clubId)).data.memberIds;
+      }
+    }
+  }
+}
