@@ -1,5 +1,9 @@
 # 🏃‍♂️ Sprint Index — Athletic Community & Sports Discovery Network
 
+<p align="center">
+  <img src="assets/branding/logo.png" alt="Sprint Index Logo" width="180" style="border-radius: 24px; box-shadow: 0 8px 32px rgba(33, 117, 155, 0.25);" />
+</p>
+
 > **Cross-Platform Athletic Community & Sports Club Discovery Platform** built with **Flutter & Dart**, featuring real-time group chat, interactive Google Maps club geolocation, Firebase Cloud Functions push notifications, and activity coordination.
 
 [![Flutter](https://img.shields.io/badge/Flutter-3.9+-02569B?style=for-the-badge&logo=flutter&logoColor=white)](https://flutter.dev)
